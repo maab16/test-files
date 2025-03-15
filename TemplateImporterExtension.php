@@ -91,29 +91,28 @@ class TemplateImporterExtension extends Extension
         // Register assets
         add_action('admin_enqueue_scripts', array($this, 'register_assets'));
         
-        // AJAX handlers - register outside of any hook for better reliability
+        // AJAX handlers
         add_action('wp_ajax_csmf_fetch_templates', array($this, 'ajax_fetch_templates'));
         add_action('wp_ajax_csmf_import_template', array($this, 'ajax_import_template'));
-        // add_action('wp_ajax_csmf_convert_template_to_page', [$this, 'ajax_convert_template_to_page']);
         add_action('wp_ajax_csmf_upload_template', array($this, 'ajax_upload_template'));
 
-        // Process direct template import (non-AJAX)
+        // Admin init
         add_action('admin_init', array($this, 'init_template_processing'));
 
         // Add template converter functionality
         if (is_admin()) {
             // Register converter assets
-            add_action('admin_enqueue_scripts', [$this, 'register_converter_assets']);
+            add_action('admin_enqueue_scripts', array($this, 'register_converter_assets'));
             
-            // Add button to row actions instead of custom column
-            add_filter('post_row_actions', [$this, 'add_template_row_actions'], 10, 2);
+            // Add button to row actions
+            add_filter('post_row_actions', array($this, 'add_template_row_actions'), 10, 2);
             
-            // Register AJAX handler directly
-            add_action('wp_ajax_csmf_convert_template_to_page', [$this, 'ajax_convert_template_to_page']);
+            // Register AJAX handler for template conversion
+            add_action('wp_ajax_csmf_convert_template_to_page', array($this, 'ajax_convert_template_to_page'));
         }
     }
 
-    /**
+        /**
      * Add a convert button to template row actions
      */
     public function add_template_row_actions($actions, $post) {
@@ -136,8 +135,6 @@ class TemplateImporterExtension extends Extension
      * Initialization method for admin_init hook
      */
     public function init_template_processing() {
-        // Only process AJAX requests separately, don't do template processing on every admin page
-        
         // Register AJAX actions for frontend
         add_action('wp_ajax_csmf_import_template', array($this, 'ajax_import_template'));
     }
@@ -191,27 +188,30 @@ class TemplateImporterExtension extends Extension
         wp_register_style(
             'csmf-template-importer-styles',
             CSMF_URL . 'assets/css/template-importer.css',
-            [],
-            CSMF_VERSION
+            array(),
+            $this->version
         );
 
         // Register JS
         wp_register_script(
             'csmf-template-importer',
             CSMF_URL . 'assets/js/template-importer.js',
-            ['jquery'],
-            CSMF_VERSION,
+            array('jquery'),
+            $this->version,
             true
         );
 
         // Localize script with data
-        wp_localize_script('csmf-template-importer', 'csmfTemplateImporter', [
+        wp_localize_script('csmf-template-importer', 'csmfTemplateImporter', array(
             'ajaxUrl' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('csmf_template_importer_nonce'),
-            'i18n' => [
-                // translations...
-            ]
-        ]);
+            'i18n' => array(
+                'importing' => __('Importing...', 'elementor-template-importer'),
+                'success' => __('Success', 'elementor-template-importer'),
+                'error' => __('Error', 'elementor-template-importer'),
+                'noTemplatesFound' => __('No templates found.', 'elementor-template-importer')
+            )
+        ));
         
         // Enqueue on admin pages
         if (is_admin()) {
@@ -231,7 +231,7 @@ class TemplateImporterExtension extends Extension
         });
     }
 
-    /**
+        /**
      * Register and enqueue converter assets
      */
     public function register_converter_assets($hook) {
@@ -246,24 +246,24 @@ class TemplateImporterExtension extends Extension
         wp_register_style(
             'csmf-template-converter',
             CSMF_URL . 'assets/css/template-converter.css',
-            [],
-            CSMF_VERSION
+            array(),
+            $this->version
         );
         
         // Register JS
         wp_register_script(
             'csmf-template-converter',
             CSMF_URL . 'assets/js/template-converter.js',
-            ['jquery'],
-            CSMF_VERSION,
+            array('jquery'),
+            $this->version,
             true
         );
         
         // Localize script
-        wp_localize_script('csmf-template-converter', 'csmfTemplateConverter', [
+        wp_localize_script('csmf-template-converter', 'csmfTemplateConverter', array(
             'ajaxUrl' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('csmf_template_importer_nonce'),
-            'i18n' => [
+            'i18n' => array(
                 'converting' => __('Converting...', 'elementor-template-importer'),
                 'successTitle' => __('Success!', 'elementor-template-importer'),
                 'preview' => __('Preview', 'elementor-template-importer'),
@@ -272,8 +272,8 @@ class TemplateImporterExtension extends Extension
                 'errorConverting' => __('Error converting template to page', 'elementor-template-importer'),
                 'errorServer' => __('Error connecting to the server', 'elementor-template-importer'),
                 'noTemplateSelected' => __('No template selected', 'elementor-template-importer')
-            ]
-        ]);
+            )
+        ));
         
         // Enqueue assets
         wp_enqueue_style('dashicons');
@@ -282,50 +282,153 @@ class TemplateImporterExtension extends Extension
     }
 
     /**
-     * Add custom column to the Elementor templates list
+     * Extract title from JSON data
      * 
-     * @param array $columns The columns array
-     * @return array Modified columns array
+     * @param array $data Template data
+     * @return string Original title or empty string
      */
-    public function add_template_convert_column($columns) {
-        $new_columns = [];
+    private function extract_title_from_json($data) {
+        if (isset($data['title']) && !empty($data['title'])) {
+            return sanitize_text_field($data['title']);
+        } else if (isset($data['page_settings']['title']) && !empty($data['page_settings']['title'])) {
+            return sanitize_text_field($data['page_settings']['title']);
+        } else if (isset($data['settings']['title']) && !empty($data['settings']['title'])) {
+            return sanitize_text_field($data['settings']['title']);
+        }
         
-        foreach ($columns as $key => $value) {
-            $new_columns[$key] = $value;
-            
-            // Add our column after title
-            if ($key === 'title') {
-                $new_columns['csmf_convert'] = __('Convert', 'elementor-template-importer');
+        return '';
+    }
+
+    /**
+     * Extract title from XML content
+     * 
+     * @param string $content XML content
+     * @return string Original title or empty string
+     */
+    private function extract_title_from_xml($content) {
+        libxml_use_internal_errors(true);
+        $xml = simplexml_load_string($content);
+        
+        if ($xml === false) {
+            libxml_clear_errors();
+            return '';
+        }
+        
+        // Try to extract from WordPress export format
+        if (isset($xml->channel) && isset($xml->channel->item)) {
+            foreach ($xml->channel->item as $item) {
+                if (isset($item->title) && !empty($item->title)) {
+                    return sanitize_text_field((string)$item->title);
+                }
             }
         }
         
-        return $new_columns;
+        // Try direct title
+        if (isset($xml->title)) {
+            return sanitize_text_field((string)$xml->title);
+        }
+        
+        libxml_clear_errors();
+        return '';
     }
 
-    /**
-     * Populate the custom column with a Convert button
+        /**
+     * Check if page with given title exists
      * 
-     * @param string $column_name The name of the column
-     * @param int $post_id The post ID
+     * @param string $title Page title
+     * @return bool Whether page exists
      */
-    public function populate_template_convert_column($column_name, $post_id) {
-        if ($column_name !== 'csmf_convert') {
-            return;
+    private function page_exists_with_title($title) {
+        if (empty($title)) {
+            return false;
         }
         
-        // Only show button for Elementor templates
-        if (get_post_type($post_id) !== 'elementor_library') {
-            return;
+        $page = get_page_by_title($title, OBJECT, 'page');
+        return !is_null($page);
+    }
+    
+    /**
+     * Check if template with given title exists
+     * 
+     * @param string $title Template title
+     * @return bool Whether template exists
+     */
+    private function template_exists_with_title($title) {
+        if (empty($title)) {
+            return false;
         }
         
-        // Output the button
-        echo '<button type="button" class="button button-small csmf-convert-template" data-template-id="' . esc_attr($post_id) . '">' .
-            '<span class="dashicons dashicons-download" style="font-size: 16px; vertical-align: text-bottom; margin-right: 3px;"></span> ' .
-            __('Convert to Page', 'elementor-template-importer') .
-        '</button>';
+        $template = get_page_by_title($title, OBJECT, 'elementor_library');
+        return !is_null($template);
+    }
+    
+    /**
+     * Create a unique page title
+     * 
+     * @param string $title Original title
+     * @return string Unique title with suffix if needed
+     */
+    private function create_unique_page_title($title) {
+        if (empty($title)) {
+            return 'Imported Page';
+        }
+        
+        $original_title = $title;
+        $counter = 1;
+        $suffixes = [' - Copy', ' - New', ' - Duplicate'];
+        
+        while ($this->page_exists_with_title($title)) {
+            if ($counter <= count($suffixes)) {
+                $title = $original_title . $suffixes[$counter - 1];
+            } else {
+                $title = $original_title . ' - Copy ' . ($counter - count($suffixes) + 1);
+            }
+            $counter++;
+            
+            // Safety check to prevent infinite loops
+            if ($counter > 100) {
+                $title = $original_title . ' - ' . uniqid();
+                break;
+            }
+        }
+        
+        return $title;
+    }
+    
+    /**
+     * Create a unique template title
+     * 
+     * @param string $title Original title
+     * @return string Unique title with suffix if needed
+     */
+    private function create_unique_template_title($title) {
+        if (empty($title)) {
+            return 'Imported Template';
+        }
+        
+        $original_title = $title;
+        $counter = 1;
+        $suffixes = [' - Copy', ' - New', ' - Duplicate'];
+        
+        while ($this->template_exists_with_title($title)) {
+            if ($counter <= count($suffixes)) {
+                $title = $original_title . $suffixes[$counter - 1];
+            } else {
+                $title = $original_title . ' - Copy ' . ($counter - count($suffixes) + 1);
+            }
+            $counter++;
+            
+            // Safety check to prevent infinite loops
+            if ($counter > 100) {
+                $title = $original_title . ' - ' . uniqid();
+                break;
+            }
+        }
+        
+        return $title;
     }
 
-    /**
+        /**
      * Render the Importer page
      */
     public function render_importer_page() {
@@ -436,13 +539,14 @@ class TemplateImporterExtension extends Extension
         <?php
     }
 
-    /**
+        /**
      * AJAX handler to fetch templates
      */
     public function ajax_fetch_templates() {
         // Verify nonce
         if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'csmf_template_importer_nonce')) {
             wp_send_json_error(array('message' => __('Security check failed', 'elementor-template-importer')));
+            return;
         }
 
         // Get templates from remote URL
@@ -456,6 +560,7 @@ class TemplateImporterExtension extends Extension
             wp_send_json_error(array(
                 'message' => __('Error fetching templates: ', 'elementor-template-importer') . $response->get_error_message()
             ));
+            return;
         }
         
         $status_code = wp_remote_retrieve_response_code($response);
@@ -467,6 +572,7 @@ class TemplateImporterExtension extends Extension
                     $status_code
                 )
             ));
+            return;
         }
         
         $body = wp_remote_retrieve_body($response);
@@ -476,12 +582,14 @@ class TemplateImporterExtension extends Extension
             wp_send_json_error(array(
                 'message' => __('Invalid JSON response: ', 'elementor-template-importer') . json_last_error_msg()
             ));
+            return;
         }
         
         if (!isset($data['templates']) || !is_array($data['templates'])) {
             wp_send_json_error(array(
                 'message' => __('No templates found in response', 'elementor-template-importer')
             ));
+            return;
         }
         
         // Process templates to ensure URLs are correctly formatted
@@ -524,13 +632,13 @@ class TemplateImporterExtension extends Extension
         ));
     }
 
-    /**
+        /**
      * AJAX handler for importing templates
      */
     public function ajax_import_template() {
         // Check nonce
         if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'csmf_template_importer_nonce')) {
-            wp_send_json_error(array('message' => 'Security check failed'));
+            wp_send_json_error(array('message' => __('Security check failed', 'elementor-template-importer')));
             return;
         }
         
@@ -540,12 +648,12 @@ class TemplateImporterExtension extends Extension
         $template_title = isset($_POST['template_title']) ? sanitize_text_field($_POST['template_title']) : '';
         
         if (empty($template_id)) {
-            wp_send_json_error(array('message' => 'Template ID is required'));
+            wp_send_json_error(array('message' => __('Template ID is required', 'elementor-template-importer')));
             return;
         }
         
         // Build template URL - try JSON first
-        $template_url = 'https://demo.hivetheme.com/templates/csmf-page-' . $template_id . '.json';
+        $template_url = $this->templates_base_url . 'csmf-page-' . $template_id . '.json';
         
         // Download the template
         $response = wp_remote_get($template_url, array(
@@ -555,7 +663,7 @@ class TemplateImporterExtension extends Extension
         
         // Check for errors
         if (is_wp_error($response)) {
-            wp_send_json_error(array('message' => 'Error downloading template: ' . $response->get_error_message()));
+            wp_send_json_error(array('message' => __('Error downloading template: ', 'elementor-template-importer') . $response->get_error_message()));
             return;
         }
         
@@ -563,7 +671,7 @@ class TemplateImporterExtension extends Extension
         $response_code = wp_remote_retrieve_response_code($response);
         if ($response_code !== 200) {
             // Try alternative URL format with XML
-            $template_url = 'https://demo.hivetheme.com/templates/csmf-page-' . $template_id . '.xml';
+            $template_url = $this->templates_base_url . 'csmf-page-' . $template_id . '.xml';
             
             $response = wp_remote_get($template_url, array(
                 'timeout' => 60,
@@ -571,7 +679,7 @@ class TemplateImporterExtension extends Extension
             ));
             
             if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
-                wp_send_json_error(array('message' => 'Template not found. Please check the template ID.'));
+                wp_send_json_error(array('message' => __('Template not found. Please check the template ID.', 'elementor-template-importer')));
                 return;
             }
         }
@@ -580,11 +688,25 @@ class TemplateImporterExtension extends Extension
         $content = wp_remote_retrieve_body($response);
         $file_extension = pathinfo($template_url, PATHINFO_EXTENSION);
         
+        // Try to extract original template name
+        $original_title = '';
+        if ($file_extension === 'json') {
+            $data = json_decode($content, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $original_title = $this->extract_title_from_json($data);
+            }
+        } elseif ($file_extension === 'xml') {
+            $original_title = $this->extract_title_from_xml($content);
+        }
+        
+        // Use original title if found, otherwise use provided title
+        $final_title = !empty($original_title) ? $original_title : $template_title;
+        
         // Import the template
         if ($file_extension === 'json') {
-            $result = $this->import_json_template($content, $template_title, $import_type);
+            $result = $this->import_json_template($content, $final_title, $import_type);
         } else {
-            $result = $this->import_xml_template($content, $template_title, $import_type);
+            $result = $this->import_xml_template($content, $final_title, $import_type);
         }
         
         // Check for errors
@@ -595,186 +717,13 @@ class TemplateImporterExtension extends Extension
         
         // Return success
         wp_send_json_success(array(
-            'message' => 'Template imported successfully',
+            'message' => __('Template imported successfully', 'elementor-template-importer'),
             'template_id' => $result,
             'edit_url' => admin_url('post.php?post=' . $result . '&action=elementor')
         ));
     }
-    
-    /**
-     * AJAX handler for uploading templates
-     */
-    public function ajax_upload_template() {
-        // Verify nonce
-        if (!isset($_POST['csmf_nonce']) || !wp_verify_nonce($_POST['csmf_nonce'], 'csmf_template_upload_nonce')) {
-            wp_send_json_error(array('message' => __('Security check failed', 'elementor-template-importer')));
-        }
-        
-        // Check file upload
-        if (!isset($_FILES['template_file']) || $_FILES['template_file']['error'] !== UPLOAD_ERR_OK) {
-            $error_message = isset($_FILES['template_file']) ? 
-                            $this->get_upload_error_message($_FILES['template_file']['error']) : 
-                            __('No file uploaded', 'elementor-template-importer');
-            
-            wp_send_json_error(array('message' => $error_message));
-        }
-        
-        // Get import type
-        $import_type = isset($_POST['import_type']) ? sanitize_text_field($_POST['import_type']) : 'template';
-        
-        $file_tmp = $_FILES['template_file']['tmp_name'];
-        $file_name = $_FILES['template_file']['name'];
-        $file_ext = strtolower(pathinfo($file_name, PATHINFO_EXTENSION));
-        
-        // Process the template based on file type
-        $result = false;
-        $template_title = pathinfo($file_name, PATHINFO_FILENAME);
-        
-        if ($file_ext === 'json') {
-            $template_content = file_get_contents($file_tmp);
-            $result = $this->import_json_template($template_content, $template_title, $import_type);
-        } elseif ($file_ext === 'xml') {
-            $template_content = file_get_contents($file_tmp);
-            $result = $this->import_xml_template($template_content, $template_title, $import_type);
-        } elseif ($file_ext === 'zip') {
-            $result = $this->import_zip_template_from_file($file_tmp, $template_title, $import_type);
-        } else {
-            wp_send_json_error(array(
-                'message' => __('Unsupported file format. Please upload JSON, XML, or ZIP files.', 'elementor-template-importer')
-            ));
-        }
-        
-        if (is_wp_error($result)) {
-            wp_send_json_error(array(
-                'message' => $result->get_error_message()
-            ));
-        }
-        
-        // Get post type for response information
-        $post_type = get_post_type($result);
-        $post_title = get_the_title($result);
-        
-        wp_send_json_success(array(
-            'message' => sprintf(
-                __('Template "%s" imported successfully as %s', 'elementor-template-importer'),
-                $post_title,
-                $post_type === 'page' ? __('Page', 'elementor-template-importer') : __('Template', 'elementor-template-importer')
-            ),
-            'template_id' => $result,
-            'post_type' => $post_type,
-            'edit_url' => admin_url('post.php?post=' . $result . '&action=elementor')
-        ));
-    }
 
-    /**
-     * Process template import
-     * Public method that can be called from multiple places
-     * 
-     * @param string $content Template content
-     * @param string $file_extension File extension (json, xml)
-     * @param string $template_title Template title
-     * @param string $import_type Import type (page or template)
-     * @return int|WP_Error Post ID on success, WP_Error on failure
-     */
-    public function process_template_import($content, $file_extension, $template_title, $import_type) {
-        if ($file_extension === 'json') {
-            return $this->import_json_template($content, $template_title, $import_type);
-        } elseif ($file_extension === 'xml') {
-            return $this->import_xml_template($content, $template_title, $import_type);
-        } else {
-            return new WP_Error('unsupported_format', 'Unsupported file format: ' . $file_extension);
-        }
-    }
-
-    /**
-     * Import JSON template
-     * 
-     * @param string $content JSON content
-     * @param string $title Template title
-     * @param string $import_type Import type (page or template)
-     * @return int|WP_Error Post ID on success, WP_Error on failure
-     */
-    private function import_json_template($content, $title, $import_type) {
-        // Disable WordPress URL filters
-        $this->disable_url_filters();
-        
-        try {
-            // Decode JSON
-            $data = json_decode($content, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                return new WP_Error('invalid_json', 'Invalid JSON format');
-            }
-            
-            // Determine Elementor data format
-            $elementor_data = '';
-            if (isset($data[0]['elType'])) {
-                // Direct Elementor data
-                $elementor_data = $content; // Use raw content to preserve exact format
-            } elseif (isset($data['content'])) {
-                // Template export format
-                if (is_array($data['content'])) {
-                    $elementor_data = wp_json_encode($data['content']);
-                } else {
-                    $elementor_data = $data['content'];
-                }
-            } else {
-                return new WP_Error('invalid_format', 'Unrecognized template format');
-            }
-            
-            // Extract page settings
-            $page_settings = array();
-            if (isset($data['page_settings']) && is_array($data['page_settings'])) {
-                $page_settings = $data['page_settings'];
-            }
-            
-            // Create post
-            $post_data = array(
-                'post_title' => !empty($title) ? $title : 'Imported Template',
-                'post_status' => 'publish',
-                'post_type' => $import_type === 'page' ? 'page' : 'elementor_library',
-                'post_content' => '',
-            );
-            
-            $post_id = wp_insert_post($post_data);
-            if (is_wp_error($post_id)) {
-                return $post_id;
-            }
-            
-            // Set Elementor edit mode
-            update_post_meta($post_id, '_elementor_edit_mode', 'builder');
-            
-            // Set template type for Elementor library
-            if ($import_type === 'template') {
-                $template_type = isset($data['type']) ? $data['type'] : 'page';
-                update_post_meta($post_id, '_elementor_template_type', $template_type);
-            }
-            
-            // Set page template
-            if (isset($page_settings['template'])) {
-                update_post_meta($post_id, '_wp_page_template', $page_settings['template']);
-            } else {
-                update_post_meta($post_id, '_wp_page_template', 'elementor_header_footer');
-            }
-            
-            // Set page settings
-            if (!empty($page_settings)) {
-                update_post_meta($post_id, '_elementor_page_settings', $page_settings);
-            }
-            
-            // Save Elementor data - CRITICAL: Use wp_slash to preserve backslashes
-            update_post_meta($post_id, '_elementor_data', wp_slash($elementor_data));
-            
-            // Enable URL filters
-            $this->enable_url_filters();
-            
-            return $post_id;
-        } catch (Exception $e) {
-            $this->enable_url_filters();
-            return new WP_Error('import_failed', $e->getMessage());
-        }
-    }
-
-    /**
+        /**
      * AJAX handler for converting template to page
      */
     public function ajax_convert_template_to_page() {
@@ -807,9 +756,16 @@ class TemplateImporterExtension extends Extension
             return;
         }
         
+        // Get original template name if stored in metadata, otherwise use template title
+        $original_name = get_post_meta($template_id, '_csmf_original_template_name', true);
+        $template_name = !empty($original_name) ? $original_name : $template->post_title;
+        
+        // Create a unique page title to avoid duplicates
+        $page_title = $this->create_unique_page_title($template_name);
+        
         // Create new page
         $page_data = [
-            'post_title' => $template->post_title . ' (Page)',
+            'post_title' => $page_title,
             'post_status' => 'publish',
             'post_type' => 'page',
             'post_content' => '', // We'll use Elementor data instead
@@ -843,6 +799,12 @@ class TemplateImporterExtension extends Extension
             update_post_meta($page_id, '_elementor_page_settings', $page_settings);
         }
         
+        // Store reference to original template
+        update_post_meta($page_id, '_csmf_original_template_id', $template_id);
+        if (!empty($original_name)) {
+            update_post_meta($page_id, '_csmf_original_template_name', $original_name);
+        }
+        
         // Get URLs for the new page
         $preview_url = get_permalink($page_id);
         $edit_url = admin_url('post.php?post=' . $page_id . '&action=elementor');
@@ -851,7 +813,7 @@ class TemplateImporterExtension extends Extension
         wp_send_json_success([
             'message' => sprintf(
                 __('Template "%s" successfully converted to page', 'elementor-template-importer'),
-                esc_html($template->post_title)
+                esc_html($template_name)
             ),
             'title' => __('Success!', 'elementor-template-importer'),
             'page_id' => $page_id,
@@ -860,251 +822,323 @@ class TemplateImporterExtension extends Extension
         ]);
     }
 
-    /**
-     * Examine a template file and display its structure
-     * Helps diagnose import issues
-     * 
-     * @param string $url Template URL
-     * @return string Debug information about the template
+        /**
+     * AJAX handler for uploading templates
      */
-    public function examine_template_file($url) {
-        if (!current_user_can('manage_options')) {
-            return 'Insufficient permissions';
+    public function ajax_upload_template() {
+        // Verify nonce
+        if (!isset($_POST['csmf_nonce']) || !wp_verify_nonce($_POST['csmf_nonce'], 'csmf_template_upload_nonce')) {
+            wp_send_json_error(array('message' => __('Security check failed', 'elementor-template-importer')));
+            return;
         }
         
-        $response = wp_remote_get($url, array(
-            'timeout' => 60,
-            'sslverify' => false,
-            'user-agent' => 'WordPress/' . get_bloginfo('version')
+        // Check file upload
+        if (!isset($_FILES['template_file']) || $_FILES['template_file']['error'] !== UPLOAD_ERR_OK) {
+            $error_message = isset($_FILES['template_file']) ? 
+                            $this->get_upload_error_message($_FILES['template_file']['error']) : 
+                            __('No file uploaded', 'elementor-template-importer');
+            
+            wp_send_json_error(array('message' => $error_message));
+            return;
+        }
+        
+        // Get import type
+        $import_type = isset($_POST['import_type']) ? sanitize_text_field($_POST['import_type']) : 'template';
+        
+        $file_tmp = $_FILES['template_file']['tmp_name'];
+        $file_name = $_FILES['template_file']['name'];
+        $file_ext = strtolower(pathinfo($file_name, PATHINFO_EXTENSION));
+        
+        // Get original filename without extension as template title
+        $template_title = pathinfo($file_name, PATHINFO_FILENAME);
+        
+        // Process the template based on file type
+        if ($file_ext === 'json') {
+            $template_content = file_get_contents($file_tmp);
+            $result = $this->import_json_template($template_content, $template_title, $import_type);
+        } elseif ($file_ext === 'xml') {
+            $template_content = file_get_contents($file_tmp);
+            $result = $this->import_xml_template($template_content, $template_title, $import_type);
+        } elseif ($file_ext === 'zip') {
+            $result = $this->import_zip_template_from_file($file_tmp, $template_title, $import_type);
+        } else {
+            wp_send_json_error(array(
+                'message' => __('Unsupported file format. Please upload JSON, XML, or ZIP files.', 'elementor-template-importer')
+            ));
+            return;
+        }
+        
+        if (is_wp_error($result)) {
+            wp_send_json_error(array(
+                'message' => $result->get_error_message()
+            ));
+            return;
+        }
+        
+        // Get post type for response information
+        $post_type = get_post_type($result);
+        $post_title = get_the_title($result);
+        
+        wp_send_json_success(array(
+            'message' => sprintf(
+                __('Template "%s" imported successfully as %s', 'elementor-template-importer'),
+                $post_title,
+                $post_type === 'page' ? __('Page', 'elementor-template-importer') : __('Template', 'elementor-template-importer')
+            ),
+            'template_id' => $result,
+            'post_type' => $post_type,
+            'edit_url' => admin_url('post.php?post=' . $result . '&action=elementor')
         ));
+    }
+
+        /**
+     * Import JSON template
+     * 
+     * @param string $content JSON content
+     * @param string $title Template title
+     * @param string $import_type Import type (page or template)
+     * @return int|WP_Error Post ID on success, WP_Error on failure
+     */
+    private function import_json_template($content, $title, $import_type) {
+        // Disable WordPress URL filters
+        $this->disable_url_filters();
         
-        if (is_wp_error($response)) {
-            return 'Error downloading template: ' . $response->get_error_message();
-        }
-        
-        $status_code = wp_remote_retrieve_response_code($response);
-        if ($status_code !== 200) {
-            return 'Error: Server returned status code ' . $status_code;
-        }
-        
-        $content = wp_remote_retrieve_body($response);
-        $file_extension = pathinfo(parse_url($url, PHP_URL_PATH), PATHINFO_EXTENSION);
-        
-        $output = "Template Examination Results:\n\n";
-        $output .= "File type: " . strtoupper($file_extension) . "\n";
-        $output .= "Content length: " . strlen($content) . " bytes\n\n";
-        
-        if ($file_extension === 'json') {
-            // Parse JSON and show structure
+        try {
+            // Decode JSON
             $data = json_decode($content, true);
-            if ($data === null) {
-                $output .= "INVALID JSON: " . json_last_error_msg() . "\n";
-                return $output;
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                return new WP_Error('invalid_json', 'Invalid JSON format');
             }
             
-            $output .= "JSON Structure:\n";
-            $output .= "Top-level keys: " . implode(", ", array_keys($data)) . "\n\n";
+            // Try to extract original template name from JSON
+            $original_title = $this->extract_title_from_json($data);
             
-            // Check for Elementor data
-            if (isset($data[0]['id']) || isset($data[0]['elType'])) {
-                $output .= "FORMAT: Direct Elementor data array\n";
-                $output .= "Number of elements: " . count($data) . "\n";
-                $output .= "First element type: " . (isset($data[0]['elType']) ? $data[0]['elType'] : 'unknown') . "\n";
-            } else if (isset($data['content'])) {
-                $output .= "FORMAT: Template export with content field\n";
-                if (is_string($data['content'])) {
-                    $output .= "Content field is string, length: " . strlen($data['content']) . "\n";
-                    
-                    // Try to parse the content
-                    $content_data = json_decode($data['content'], true);
-                    if ($content_data !== null) {
-                        $output .= "Content field contains valid JSON\n";
-                        if (is_array($content_data)) {
-                            $output .= "Content elements: " . count($content_data) . "\n";
-                        }
-                    } else {
-                        $output .= "Content field is not valid JSON\n";
-                    }
-                } else if (is_array($data['content'])) {
-                    $output .= "Content field is array with " . count($data['content']) . " elements\n";
+            // Use original title if found, otherwise use provided title
+            $final_title = !empty($original_title) ? $original_title : $title;
+            
+            // Make sure title is unique
+            if ($import_type === 'page') {
+                $final_title = $this->create_unique_page_title($final_title);
+            } else {
+                $final_title = $this->create_unique_template_title($final_title);
+            }
+            
+            // Determine Elementor data format
+            $elementor_data = '';
+            if (isset($data[0]['elType'])) {
+                // Direct Elementor data
+                $elementor_data = $content; // Use raw content to preserve exact format
+            } elseif (isset($data['content'])) {
+                // Template export format
+                if (is_array($data['content'])) {
+                    $elementor_data = wp_json_encode($data['content']);
                 } else {
-                    $output .= "Content field has unknown type: " . gettype($data['content']) . "\n";
+                    $elementor_data = $data['content'];
                 }
+            } else {
+                return new WP_Error('invalid_format', 'Unrecognized template format');
             }
             
-            // Check for page settings
-            if (isset($data['page_settings'])) {
-                $output .= "\nPage Settings:\n";
-                $output .= "Settings keys: " . implode(", ", array_keys($data['page_settings'])) . "\n";
-                if (isset($data['page_settings']['template'])) {
-                    $output .= "Template: " . $data['page_settings']['template'] . "\n";
-                }
+            // Extract page settings
+            $page_settings = array();
+            if (isset($data['page_settings']) && is_array($data['page_settings'])) {
+                $page_settings = $data['page_settings'];
             }
-        } else if ($file_extension === 'xml') {
-            // Parse XML and show structure
+            
+            // Create post
+            $post_data = array(
+                'post_title' => $final_title,
+                'post_status' => 'publish',
+                'post_type' => $import_type === 'page' ? 'page' : 'elementor_library',
+                'post_content' => '',
+            );
+            
+            $post_id = wp_insert_post($post_data);
+            if (is_wp_error($post_id)) {
+                return $post_id;
+            }
+            
+            // Set Elementor edit mode
+            update_post_meta($post_id, '_elementor_edit_mode', 'builder');
+            
+            // Set template type for Elementor library
+            if ($import_type === 'template') {
+                $template_type = isset($data['type']) ? $data['type'] : 'page';
+                update_post_meta($post_id, '_elementor_template_type', $template_type);
+            }
+            
+            // Set page template
+            if (isset($page_settings['template'])) {
+                update_post_meta($post_id, '_wp_page_template', $page_settings['template']);
+            } else {
+                update_post_meta($post_id, '_wp_page_template', 'elementor_header_footer');
+            }
+            
+            // Set page settings
+            if (!empty($page_settings)) {
+                update_post_meta($post_id, '_elementor_page_settings', $page_settings);
+            }
+
+            $elementor_data = $this->csmf_process_elementor_data($elementor_data);
+
+            // Then save as usual
+            update_post_meta($post_id, '_elementor_data', wp_slash($elementor_data));
+            
+            // Store the original template name for future reference
+            if (!empty($original_title)) {
+                update_post_meta($post_id, '_csmf_original_template_name', $original_title);
+            }
+            
+            // Enable URL filters
+            $this->enable_url_filters();
+            
+            return $post_id;
+        } catch (Exception $e) {
+            $this->enable_url_filters();
+            return new WP_Error('import_failed', $e->getMessage());
+        }
+    }
+
+        /**
+     * Import XML template
+     * 
+     * @param string $content XML content
+     * @param string $title Template title
+     * @param string $import_type Import type (page or template)
+     * @return int|WP_Error Post ID on success, WP_Error on failure
+     */
+    private function import_xml_template($content, $title, $import_type) {
+        // Disable WordPress URL filters
+        $this->disable_url_filters();
+        
+        try {
             libxml_use_internal_errors(true);
             $xml = simplexml_load_string($content);
+            
             if ($xml === false) {
-                $output .= "INVALID XML: \n";
+                $errors = '';
                 foreach(libxml_get_errors() as $error) {
-                    $output .= "  " . $error->message . "\n";
+                    $errors .= $error->message . "\n";
                 }
                 libxml_clear_errors();
-                return $output;
+                return new WP_Error('invalid_xml', 'XML parsing failed: ' . $errors);
             }
             
-            $output .= "XML Structure:\n";
-            $output .= "Root element: " . $xml->getName() . "\n\n";
+            // Try to extract original template name from XML
+            $original_title = $this->extract_title_from_xml($content);
             
-            // Check for WordPress structure
-            if (isset($xml->channel)) {
-                $output .= "FORMAT: WordPress export XML\n";
-                $output .= "Items: " . (isset($xml->channel->item) ? count($xml->channel->item) : 0) . "\n\n";
-                
-                if (isset($xml->channel->item)) {
-                    $output .= "Examining first item:\n";
-                    $item = $xml->channel->item[0];
-                    
-                    if (isset($item->children('wp', true)->post_type)) {
-                        $output .= "Post type: " . (string)$item->children('wp', true)->post_type . "\n";
-                    }
-                    
-                    // Look for Elementor data
-                    if (isset($item->children('wp', true)->postmeta)) {
-                        $elementor_found = false;
-                        foreach ($item->children('wp', true)->postmeta as $meta) {
-                            $meta_key = (string)$meta->children('wp', true)->meta_key;
-                            if ($meta_key === '_elementor_data') {
-                                $elementor_found = true;
-                                $elementor_data = (string)$meta->children('wp', true)->meta_value;
-                                $output .= "Found _elementor_data, length: " . strlen($elementor_data) . "\n";
+            // Use original title if found, otherwise use provided title
+            $final_title = !empty($original_title) ? $original_title : $title;
+            
+            // Make sure title is unique
+            if ($import_type === 'page') {
+                $final_title = $this->create_unique_page_title($final_title);
+            } else {
+                $final_title = $this->create_unique_template_title($final_title);
+            }
+            
+            // Find Elementor data in WordPress export format
+            $elementor_data = null;
+            $page_settings = array();
+            $page_template = 'elementor_header_footer';
+            
+            if (isset($xml->channel) && isset($xml->channel->item)) {
+                foreach ($xml->channel->item as $item) {
+                    // Check for post type
+                    $post_type = (string)$item->children('wp', true)->post_type;
+                    if ($post_type === 'page' || $post_type === 'elementor_library') {
+                        // Look for Elementor data in postmeta
+                        if (isset($item->children('wp', true)->postmeta)) {
+                            foreach ($item->children('wp', true)->postmeta as $meta) {
+                                $meta_key = (string)$meta->children('wp', true)->meta_key;
+                                $meta_value = (string)$meta->children('wp', true)->meta_value;
                                 
-                                // Check if it's valid JSON
-                                $data = json_decode($elementor_data, true);
-                                if ($data !== null) {
-                                    $output .= "Elementor data is valid JSON\n";
-                                } else {
-                                    $output .= "Elementor data is NOT valid JSON: " . json_last_error_msg() . "\n";
+                                if ($meta_key === '_elementor_data') {
+                                    $elementor_data = $meta_value;
+                                } elseif ($meta_key === '_wp_page_template') {
+                                    $page_template = $meta_value;
+                                } elseif ($meta_key === '_elementor_page_settings') {
+                                    // Try to decode page settings
+                                    $decoded = json_decode($meta_value, true);
+                                    if (is_array($decoded)) {
+                                        $page_settings = $decoded;
+                                    }
                                 }
-                                break;
                             }
                         }
                         
-                        if (!$elementor_found) {
-                            $output .= "No _elementor_data found in postmeta\n";
+                        // If we found Elementor data, we can stop looking
+                        if ($elementor_data !== null) {
+                            break;
                         }
                     }
                 }
-            } else {
-                $output .= "Non-standard XML format\n";
             }
+            
+            if ($elementor_data === null) {
+                return new WP_Error('no_elementor_data', 'No Elementor data found in the XML file');
+            }
+            
+            // Create post
+            $post_data = array(
+                'post_title' => $final_title,
+                'post_status' => 'publish',
+                'post_type' => $import_type === 'page' ? 'page' : 'elementor_library',
+                'post_content' => '',
+            );
+            
+            $post_id = wp_insert_post($post_data);
+            if (is_wp_error($post_id)) {
+                return $post_id;
+            }
+            
+            // Set Elementor edit mode
+            update_post_meta($post_id, '_elementor_edit_mode', 'builder');
+            
+            // Set template type for Elementor library
+            if ($import_type === 'template') {
+                update_post_meta($post_id, '_elementor_template_type', 'page');
+            }
+            
+            // Set page template
+            update_post_meta($post_id, '_wp_page_template', $page_template);
+            
+            // Add page settings if available
+            if (!empty($page_settings)) {
+                update_post_meta($post_id, '_elementor_page_settings', $page_settings);
+            }
+
+            $elementor_data = $this->csmf_process_elementor_data($elementor_data);
+
+            // Save Elementor data - CRITICAL: Use wp_slash to preserve backslashes
+            update_post_meta($post_id, '_elementor_data', wp_slash($elementor_data));
+            
+            // Store original template name for future reference
+            if (!empty($original_title)) {
+                update_post_meta($post_id, '_csmf_original_template_name', $original_title);
+            }
+            
+            // Enable URL filters
+            $this->enable_url_filters();
+            
+            return $post_id;
+        } catch (Exception $e) {
+            $this->enable_url_filters();
+            return new WP_Error('import_failed', $e->getMessage());
         }
-        
-        return $output;
     }
 
-    /**
-     * Import ZIP template
-     * 
-     * @param string $content ZIP file content
-     * @param string $title   Template title
-     * @param string $import_type Whether to import as 'page' or 'template'
-     * @return int|WP_Error   Template ID on success, WP_Error on failure
-     */
-    private function import_zip_template($content, $title, $import_type = 'template') {
-        if (!class_exists('ZipArchive')) {
-            return new \WP_Error(
-                'missing_zip_support', 
-                __('ZIP support is not available on your server. Please contact your hosting provider.', 'elementor-template-importer')
-            );
-        }
-        
-        // Create a temporary file to save ZIP content
-        $upload_dir = wp_upload_dir();
-        $temp_dir = $upload_dir['basedir'] . '/elementor-importer-' . uniqid();
-        
-        if (!file_exists($temp_dir)) {
-            wp_mkdir_p($temp_dir);
-        }
-        
-        $temp_file = $temp_dir . '/template.zip';
-        file_put_contents($temp_file, $content);
-        
-        // Extract the ZIP file
-        $extract_dir = $temp_dir . '/extract';
-        wp_mkdir_p($extract_dir);
-        
-        $zip = new \ZipArchive();
-        $result = $zip->open($temp_file);
-        
-        if ($result !== true) {
-            rmdir($extract_dir);
-            unlink($temp_file);
-            rmdir($temp_dir);
-            
-            return new \WP_Error(
-                'invalid_zip', 
-                __('Invalid or corrupted ZIP file.', 'elementor-template-importer')
-            );
-        }
-        
-        $zip->extractTo($extract_dir);
-        $zip->close();
-        
-        // Find and process template files
-        $files = scandir($extract_dir);
-        $json_file = null;
-        $xml_file = null;
-        
-        foreach ($files as $file) {
-            if ($file === '.' || $file === '..') {
-                continue;
-            }
-            
-            $file_ext = pathinfo($file, PATHINFO_EXTENSION);
-            
-            if ($file_ext === 'json') {
-                $json_file = $extract_dir . '/' . $file;
-            } elseif ($file_ext === 'xml') {
-                $xml_file = $extract_dir . '/' . $file;
-            }
-        }
-        
-        // Import template
-        $result = null;
-        
-        if ($json_file) {
-            $content = file_get_contents($json_file);
-            $result = $this->import_json_template($content, $title, $import_type);
-        } elseif ($xml_file) {
-            $content = file_get_contents($xml_file);
-            $result = $this->import_xml_template($content, $title, $import_type);
-        } else {
-            $result = new \WP_Error(
-                'missing_template', 
-                __('No valid template file found in ZIP archive.', 'elementor-template-importer')
-            );
-        }
-        
-        // Clean up
-        $this->recursive_delete_directory($extract_dir);
-        unlink($temp_file);
-        rmdir($temp_dir);
-        
-        return $result;
-    }
-
-    /**
+        /**
      * Import ZIP template from uploaded file
      * 
      * @param string $file_path Path to the ZIP file
-     * @param string $title     Template title
+     * @param string $title Template title
      * @param string $import_type Whether to import as 'page' or 'template'
-     * @return int|WP_Error     Template ID on success, WP_Error on failure
+     * @return int|WP_Error Template ID on success, WP_Error on failure
      */
     private function import_zip_template_from_file($file_path, $title, $import_type = 'template') {
         if (!class_exists('ZipArchive')) {
-            return new \WP_Error(
+            return new WP_Error(
                 'missing_zip_support', 
                 __('ZIP support is not available on your server. Please contact your hosting provider.', 'elementor-template-importer')
             );
@@ -1119,13 +1153,13 @@ class TemplateImporterExtension extends Extension
         }
         
         // Extract the ZIP file
-        $zip = new \ZipArchive();
+        $zip = new ZipArchive();
         $result = $zip->open($file_path);
         
         if ($result !== true) {
             rmdir($extract_dir);
             
-            return new \WP_Error(
+            return new WP_Error(
                 'invalid_zip', 
                 __('Invalid or corrupted ZIP file.', 'elementor-template-importer')
             );
@@ -1135,35 +1169,39 @@ class TemplateImporterExtension extends Extension
         $zip->close();
         
         // Find and process template files
-        $files = scandir($extract_dir);
+        $files = array_diff(scandir($extract_dir), array('.', '..'));
         $json_file = null;
         $xml_file = null;
+        $extracted_title = '';
         
         foreach ($files as $file) {
-            if ($file === '.' || $file === '..') {
-                continue;
+            $file_path = $extract_dir . '/' . $file;
+            $file_ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+            
+            // Try to extract original title from filename
+            if (empty($extracted_title)) {
+                $extracted_title = pathinfo($file, PATHINFO_FILENAME);
             }
             
-            $file_ext = pathinfo($file, PATHINFO_EXTENSION);
-            
             if ($file_ext === 'json') {
-                $json_file = $extract_dir . '/' . $file;
+                $json_file = $file_path;
             } elseif ($file_ext === 'xml') {
-                $xml_file = $extract_dir . '/' . $file;
+                $xml_file = $file_path;
             }
         }
         
         // Import template
         $result = null;
+        $final_title = !empty($title) ? $title : $extracted_title;
         
         if ($json_file) {
             $content = file_get_contents($json_file);
-            $result = $this->import_json_template($content, $title, $import_type);
+            $result = $this->import_json_template($content, $final_title, $import_type);
         } elseif ($xml_file) {
             $content = file_get_contents($xml_file);
-            $result = $this->import_xml_template($content, $title, $import_type);
+            $result = $this->import_xml_template($content, $final_title, $import_type);
         } else {
-            $result = new \WP_Error(
+            $result = new WP_Error(
                 'missing_template', 
                 __('No valid template file found in ZIP archive.', 'elementor-template-importer')
             );
@@ -1174,8 +1212,8 @@ class TemplateImporterExtension extends Extension
         
         return $result;
     }
-    
-    /**
+
+        /**
      * Get upload error message based on error code
      * 
      * @param int $error_code PHP file upload error code
@@ -1229,104 +1267,6 @@ class TemplateImporterExtension extends Extension
     }
 
     /**
-     * Import XML template
-     * 
-     * @param string $content XML content
-     * @param string $title Template title
-     * @param string $import_type Import type (page or template)
-     * @return int|WP_Error Post ID on success, WP_Error on failure
-     */
-    private function import_xml_template($content, $title, $import_type) {
-        // Disable WordPress URL filters
-        $this->disable_url_filters();
-        
-        try {
-            libxml_use_internal_errors(true);
-            $xml = simplexml_load_string($content);
-            
-            if ($xml === false) {
-                $errors = '';
-                foreach(libxml_get_errors() as $error) {
-                    $errors .= $error->message . "\n";
-                }
-                libxml_clear_errors();
-                return new WP_Error('invalid_xml', 'XML parsing failed: ' . $errors);
-            }
-            
-            // Find Elementor data in WordPress export format
-            $elementor_data = null;
-            $page_settings = array();
-            $page_template = 'elementor_header_footer';
-            
-            if (isset($xml->channel) && isset($xml->channel->item)) {
-                foreach ($xml->channel->item as $item) {
-                    // Check for post type
-                    $post_type = (string)$item->children('wp', true)->post_type;
-                    if ($post_type === 'page' || $post_type === 'elementor_library') {
-                        // Look for Elementor data in postmeta
-                        if (isset($item->children('wp', true)->postmeta)) {
-                            foreach ($item->children('wp', true)->postmeta as $meta) {
-                                $meta_key = (string)$meta->children('wp', true)->meta_key;
-                                $meta_value = (string)$meta->children('wp', true)->meta_value;
-                                
-                                if ($meta_key === '_elementor_data') {
-                                    $elementor_data = $meta_value;
-                                } elseif ($meta_key === '_wp_page_template') {
-                                    $page_template = $meta_value;
-                                }
-                            }
-                        }
-                        
-                        // If we found Elementor data, we can stop looking
-                        if ($elementor_data !== null) {
-                            break;
-                        }
-                    }
-                }
-            }
-            
-            if ($elementor_data === null) {
-                return new WP_Error('no_elementor_data', 'No Elementor data found in the XML file');
-            }
-            
-            // Create post
-            $post_data = array(
-                'post_title' => !empty($title) ? $title : 'Imported Template',
-                'post_status' => 'publish',
-                'post_type' => $import_type === 'page' ? 'page' : 'elementor_library',
-                'post_content' => '',
-            );
-            
-            $post_id = wp_insert_post($post_data);
-            if (is_wp_error($post_id)) {
-                return $post_id;
-            }
-            
-            // Set Elementor edit mode
-            update_post_meta($post_id, '_elementor_edit_mode', 'builder');
-            
-            // Set template type for Elementor library
-            if ($import_type === 'template') {
-                update_post_meta($post_id, '_elementor_template_type', 'page');
-            }
-            
-            // Set page template
-            update_post_meta($post_id, '_wp_page_template', $page_template);
-            
-            // Save Elementor data - CRITICAL: Use wp_slash to preserve backslashes
-            update_post_meta($post_id, '_elementor_data', wp_slash($elementor_data));
-            
-            // Enable URL filters
-            $this->enable_url_filters();
-            
-            return $post_id;
-        } catch (Exception $e) {
-            $this->enable_url_filters();
-            return new WP_Error('import_failed', $e->getMessage());
-        }
-    }
-
-    /**
      * Disable WordPress URL filters that might modify URLs during import
      */
     private function disable_url_filters() {
@@ -1346,764 +1286,255 @@ class TemplateImporterExtension extends Extension
     }
 
     /**
-     * Import XML with simple parser - enhanced version
+     * Sideload image from URL and attach it to the post
      * 
-     * @param string $content Template content
-     * @param string $title   Template title
-     * @param string $import_type Whether to import as 'page' or 'template'
-     * @return int|WP_Error   Template ID on success, WP_Error on failure
+     * @param string $image_url Remote image URL
+     * @return int|WP_Error Attachment ID if successful, WP_Error otherwise
      */
-    private function import_xml_with_simple_parser($content, $title, $import_type) {
-        error_log('Starting simple XML parser import');
-        
-        // Try to parse XML
-        libxml_use_internal_errors(true);
-        $xml = @simplexml_load_string($content);
-        
-        if ($xml === false) {
-            $errors = '';
-            foreach(libxml_get_errors() as $error) {
-                $errors .= $error->message . "\n";
-            }
-            libxml_clear_errors();
-            error_log('XML parsing failed: ' . $errors);
-            return new \WP_Error('invalid_xml', __('Invalid XML content: ', 'elementor-template-importer') . $errors);
+    public function csmf_sideload_image($image_url) {
+        if (empty($image_url)) {
+            return new WP_Error('empty_url', __('Image URL is empty', 'elementor-template-importer'));
         }
         
-        error_log('XML parsed successfully');
+        // Check if this is a valid URL
+        if (!filter_var($image_url, FILTER_VALIDATE_URL)) {
+            return new WP_Error('invalid_url', __('Image URL is not valid', 'elementor-template-importer'));
+        }
         
-        // Try direct extraction with multiple methods
-        $elementor_data = false;
-        $page_settings = array();
+        // Create file from URL
+        require_once(ABSPATH . 'wp-admin/includes/file.php');
+        require_once(ABSPATH . 'wp-admin/includes/media.php');
+        require_once(ABSPATH . 'wp-admin/includes/image.php');
         
-        // Method 1: Look for Elementor data in WordPress export format
-        if (isset($xml->channel) && isset($xml->channel->item)) {
-            error_log('WordPress export format detected');
+        // Check if URL is from an external source
+        $url_host = parse_url($image_url, PHP_URL_HOST);
+        $site_host = parse_url(site_url(), PHP_URL_HOST);
+        
+        if ($url_host === $site_host) {
+            // This is a local URL, just return the attachment ID if we can find it
+            $attachment_id = attachment_url_to_postid($image_url);
+            if ($attachment_id) {
+                return $attachment_id;
+            }
+        }
+        
+        // See if we've already downloaded this image
+        $cached_image = get_transient('csmf_sideloaded_' . md5($image_url));
+        if ($cached_image) {
+            return $cached_image;
+        }
+        
+        // Download image to temp location
+        $temp_file = download_url($image_url);
+        
+        if (is_wp_error($temp_file)) {
+            return $temp_file;
+        }
+        
+        // Get file name
+        $filename = basename(parse_url($image_url, PHP_URL_PATH));
+        
+        // An array similar to $_FILES
+        $file_array = array(
+            'name'     => $filename,
+            'tmp_name' => $temp_file,
+            'error'    => 0,
+            'size'     => filesize($temp_file),
+        );
+        
+        // Move the temporary file into the uploads directory
+        $attachment_id = media_handle_sideload($file_array, 0);
+        
+        // Delete the temporary file if attachment creation failed
+        if (is_wp_error($attachment_id)) {
+            @unlink($temp_file);
+            return $attachment_id;
+        }
+        
+        // Store in transient cache to avoid duplicates
+        set_transient('csmf_sideloaded_' . md5($image_url), $attachment_id, WEEK_IN_SECONDS);
+        
+        return $attachment_id;
+    }
+
+    /**
+     * Process Elementor data to replace image URLs
+     * 
+     * @param string|array $elementor_data Elementor template data
+     * @return string|array Processed Elementor data with local image URLs
+     */
+    public function csmf_process_elementor_data($elementor_data) {
+        // If data is a string, convert to array
+        $is_string = is_string($elementor_data);
+        $data = $is_string ? json_decode($elementor_data, true) : $elementor_data;
+        
+        if (empty($data) || !is_array($data)) {
+            return $elementor_data;
+        }
+        
+        // Walk through data recursively
+        $data = $this->csmf_recursively_process_element_data($data);
+        
+        // Return proper format based on input
+        return $is_string ? wp_json_encode($data) : $data;
+    }
+
+    /**
+     * Recursively process Elementor element data to replace image URLs
+     * 
+     * @param array $elements Elements to process
+     * @return array Processed elements
+     */
+    public function csmf_recursively_process_element_data($elements) {
+        // Track imported images to avoid duplicates
+        static $imported_images = array();
+        
+        if (!is_array($elements)) {
+            return $elements;
+        }
+        
+        foreach ($elements as $key => &$element) {
+            // Skip non-array items
+            if (!is_array($element)) {
+                continue;
+            }
             
-            foreach ($xml->channel->item as $item) {
-                // Check if this is an Elementor template or page
-                $post_type = (string)$item->children('wp', true)->post_type;
-                if ($post_type === 'page' || $post_type === 'elementor_library') {
-                    error_log('Found relevant item: ' . $post_type);
-                    
-                    // Look for Elementor data
-                    if (isset($item->children('wp', true)->postmeta)) {
-                        foreach ($item->children('wp', true)->postmeta as $meta) {
-                            $meta_key = (string)$meta->children('wp', true)->meta_key;
-                            
-                            if ($meta_key === '_elementor_data') {
-                                $meta_value = (string)$meta->children('wp', true)->meta_value;
-                                error_log('Found _elementor_data, length: ' . strlen($meta_value));
+            // Process settings that may contain image URLs
+            if (isset($element['settings'])) {
+                foreach ($element['settings'] as $setting_key => $setting_value) {
+                    // Process image settings
+                    if (is_string($setting_value) && preg_match('/\.(jpg|jpeg|png|gif|webp|svg)/i', $setting_value) && filter_var($setting_value, FILTER_VALIDATE_URL)) {
+                        // Check if this is an external URL
+                        $url_host = parse_url($setting_value, PHP_URL_HOST);
+                        $site_host = parse_url(site_url(), PHP_URL_HOST);
+                        
+                        if ($url_host !== $site_host) {
+                            // Import image if we haven't already
+                            if (!isset($imported_images[$setting_value])) {
+                                $attachment_id = $this->csmf_sideload_image($setting_value);
                                 
-                                // Check if it's valid JSON
-                                json_decode($meta_value);
-                                if (json_last_error() === JSON_ERROR_NONE) {
-                                    $elementor_data = $meta_value;
-                                    error_log('Valid Elementor data found');
-                                } else {
-                                    error_log('Found Elementor data but it\'s not valid JSON: ' . json_last_error_msg());
-                                    // Try to fix by double-decoding if it seems like double-encoded JSON
-                                    if (strpos($meta_value, '\\"') !== false) {
-                                        $fixed_data = stripslashes($meta_value);
-                                        json_decode($fixed_data);
-                                        if (json_last_error() === JSON_ERROR_NONE) {
-                                            $elementor_data = $fixed_data;
-                                            error_log('Fixed Elementor data by removing slashes');
-                                        }
-                                    }
+                                if (!is_wp_error($attachment_id)) {
+                                    $imported_images[$setting_value] = $attachment_id;
+                                    $attachment_url = wp_get_attachment_url($attachment_id);
+                                    $element['settings'][$setting_key] = $attachment_url;
                                 }
-                            } elseif ($meta_key === '_elementor_page_settings') {
-                                $page_settings_value = (string)$meta->children('wp', true)->meta_value;
-                                error_log('Found _elementor_page_settings');
-                                
-                                // Try to parse as serialized or JSON
-                                $decoded = @unserialize($page_settings_value);
-                                if ($decoded !== false) {
-                                    $page_settings = $decoded;
-                                    error_log('Page settings are serialized PHP data');
-                                } else {
-                                    $decoded = json_decode($page_settings_value, true);
-                                    if (is_array($decoded)) {
-                                        $page_settings = $decoded;
-                                        error_log('Page settings are JSON data');
-                                    }
-                                }
-                            } elseif ($meta_key === '_wp_page_template') {
-                                $page_template = (string)$meta->children('wp', true)->meta_value;
-                                $page_settings['template'] = $page_template;
-                                error_log('Found page template: ' . $page_template);
+                            } else {
+                                // Use previously imported image
+                                $attachment_url = wp_get_attachment_url($imported_images[$setting_value]);
+                                $element['settings'][$setting_key] = $attachment_url;
                             }
                         }
                     }
                     
-                    // If we found Elementor data, we can stop looking
-                    if ($elementor_data !== false) {
-                        break;
-                    }
-                }
-            }
-        }
-        
-        // Method 2: Try to extract from CDATA sections if Method 1 failed
-        if ($elementor_data === false) {
-            error_log('Trying alternative extraction method with CDATA sections');
-            
-            preg_match_all('/<!\[CDATA\[(.*?)\]\]>/s', $content, $cdata_matches);
-            if (!empty($cdata_matches[1])) {
-                foreach ($cdata_matches[1] as $cdata) {
-                    // Check if this looks like Elementor JSON data
-                    if (strpos($cdata, '"elType"') !== false || strpos($cdata, '"widgetType"') !== false) {
-                        error_log('Found potential Elementor data in CDATA');
+                    // Handle background image
+                    if ($setting_key === 'background_image' && is_array($setting_value) && isset($setting_value['url']) && filter_var($setting_value['url'], FILTER_VALIDATE_URL)) {
+                        $url_host = parse_url($setting_value['url'], PHP_URL_HOST);
+                        $site_host = parse_url(site_url(), PHP_URL_HOST);
                         
-                        // Validate as JSON
-                        json_decode($cdata);
-                        if (json_last_error() === JSON_ERROR_NONE) {
-                            $elementor_data = $cdata;
-                            error_log('Valid Elementor data found in CDATA');
-                            break;
+                        if ($url_host !== $site_host) {
+                            // Import image if we haven't already
+                            if (!isset($imported_images[$setting_value['url']])) {
+                                $attachment_id = $this->csmf_sideload_image($setting_value['url']);
+                                
+                                if (!is_wp_error($attachment_id)) {
+                                    $imported_images[$setting_value['url']] = $attachment_id;
+                                    $attachment_url = wp_get_attachment_url($attachment_id);
+                                    $element['settings'][$setting_key]['url'] = $attachment_url;
+                                    $element['settings'][$setting_key]['id'] = $attachment_id;
+                                }
+                            } else {
+                                // Use previously imported image
+                                $attachment_id = $imported_images[$setting_value['url']];
+                                $attachment_url = wp_get_attachment_url($attachment_id);
+                                $element['settings'][$setting_key]['url'] = $attachment_url;
+                                $element['settings'][$setting_key]['id'] = $attachment_id;
+                            }
                         }
                     }
                 }
             }
-        }
-        
-        // Method 3: Try to extract from the content field
-        if ($elementor_data === false && isset($xml->channel) && isset($xml->channel->item)) {
-            error_log('Trying to extract from content field');
             
-            foreach ($xml->channel->item as $item) {
-                // Look for content:encoded field
-                if (isset($item->children('content', true)->encoded)) {
-                    $content_field = (string)$item->children('content', true)->encoded;
-                    error_log('Found content:encoded field, length: ' . strlen($content_field));
-                    
-                    // Check if it has Elementor marker
-                    if (strpos($content_field, 'data-elementor-type') !== false) {
-                        error_log('Content field has Elementor markers');
-                        
-                        // Create a post with this content and let Elementor handle it
-                        $post_data = array(
-                            'post_title'   => !empty($title) ? sanitize_text_field($title) : __('Imported Content', 'elementor-template-importer'),
-                            'post_status'  => 'publish',
-                            'post_type'    => $import_type === 'page' ? 'page' : 'elementor_library',
-                            'post_content' => $content_field,
-                        );
-                        
-                        error_log('Creating post with Elementor content');
-                        $post_id = wp_insert_post($post_data);
-                        
-                        if (is_wp_error($post_id)) {
-                            error_log('Error creating post: ' . $post_id->get_error_message());
-                            return $post_id;
-                        }
-                        
-                        if ($import_type === 'template') {
-                            update_post_meta($post_id, '_elementor_template_type', 'page');
-                        }
-                        
-                        update_post_meta($post_id, '_elementor_edit_mode', 'builder');
-                        
-                        if (!empty($page_settings['template'])) {
-                            update_post_meta($post_id, '_wp_page_template', $page_settings['template']);
-                        } else {
-                            update_post_meta($post_id, '_wp_page_template', 'elementor_header_footer');
-                        }
-                        
-                        if (!empty($page_settings)) {
-                            update_post_meta($post_id, '_elementor_page_settings', $page_settings);
-                        }
-                        
-                        error_log('Post created successfully from content field');
-                        return $post_id;
-                    }
-                }
+            // Process child elements recursively
+            if (isset($element['elements']) && is_array($element['elements'])) {
+                $element['elements'] = $this->csmf_recursively_process_element_data($element['elements']);
             }
         }
         
-        // If we found Elementor data, create a post with it
-        if ($elementor_data !== false) {
-            error_log('Creating post with extracted Elementor data');
-            
-            // Create the post
-            $post_data = array(
-                'post_title'   => !empty($title) ? sanitize_text_field($title) : __('Imported Template', 'elementor-template-importer'),
-                'post_status'  => 'publish',
-                'post_type'    => $import_type === 'page' ? 'page' : 'elementor_library',
-                'post_content' => '',
-            );
-            
-            $post_id = wp_insert_post($post_data);
-            
-            if (is_wp_error($post_id)) {
-                error_log('Error creating post: ' . $post_id->get_error_message());
-                return $post_id;
-            }
-            
-            // Set template type if it's a library item
-            if ($import_type === 'template') {
-                update_post_meta($post_id, '_elementor_template_type', 'page');
-            }
-            
-            // Set Elementor edit mode
-            update_post_meta($post_id, '_elementor_edit_mode', 'builder');
-            
-            // Set page template
-            if (!empty($page_settings['template'])) {
-                update_post_meta($post_id, '_wp_page_template', $page_settings['template']);
-            } else {
-                update_post_meta($post_id, '_wp_page_template', 'elementor_header_footer');
-            }
-            
-            // Store page settings if we found any
-            if (!empty($page_settings)) {
-                update_post_meta($post_id, '_elementor_page_settings', $page_settings);
-            }
-            
-            // Store the Elementor data with wp_slash to prevent losing backslashes
-            update_post_meta($post_id, '_elementor_data', wp_slash($elementor_data));
-            
-            error_log('Post created successfully with ID: ' . $post_id);
-            return $post_id;
+        return $elements;
+    }
+
+    /**
+     * Get fallback image URL or ID
+     * 
+     * @param string $type 'url' or 'id'
+     * @return int|string Fallback image URL or ID
+     */
+    public function csmf_get_fallback_image($type = 'url') {
+        // Check if we've already created a fallback image
+        $fallback_id = get_option('csmf_fallback_image_id');
+        
+        if (!$fallback_id) {
+            // Create a fallback image
+            $fallback_id = $this->csmf_create_fallback_image();
+            update_option('csmf_fallback_image_id', $fallback_id);
         }
         
-        // If all methods failed, return error
-        error_log('No Elementor data could be extracted from the XML');
-        return new \WP_Error(
-            'no_elementor_data',
-            __('Could not extract Elementor data from the XML file. Try using WordPress Importer plugin.', 'elementor-template-importer')
+        if ($type === 'id') {
+            return $fallback_id;
+        }
+        
+        return wp_get_attachment_url($fallback_id);
+    }
+
+    /**
+     * Create a fallback image in the media library
+     * 
+     * @return int|WP_Error Attachment ID if successful
+     */
+    public function csmf_create_fallback_image() {
+        // Create a simple placeholder image
+        $width = 800;
+        $height = 600;
+        
+        // Create image
+        $image = imagecreatetruecolor($width, $height);
+        
+        // Set background
+        $bg_color = imagecolorallocate($image, 240, 240, 240);
+        imagefill($image, 0, 0, $bg_color);
+        
+        // Add text
+        $text_color = imagecolorallocate($image, 150, 150, 150);
+        $text = "Image Placeholder";
+        $font_size = 5;
+        $font = imageloadfont(5);
+        
+        // Calculate position to center text
+        $text_width = imagefontwidth($font_size) * strlen($text);
+        $text_height = imagefontheight($font_size);
+        $x = ($width - $text_width) / 2;
+        $y = ($height - $text_height) / 2;
+        
+        imagestring($image, $font_size, $x, $y, $text, $text_color);
+        
+        // Save to temp file
+        $temp_file = wp_tempnam('placeholder.jpg');
+        imagejpeg($image, $temp_file);
+        imagedestroy($image);
+        
+        // Import to media library
+        $file_array = array(
+            'name' => 'elementor-template-placeholder.jpg',
+            'tmp_name' => $temp_file,
+            'error' => 0,
+            'size' => filesize($temp_file),
         );
-    }
-
-    /**
-     * Custom direct import method - preserves all URLs
-     * 
-     * @param string $template_content JSON or XML content
-     * @param string $file_extension File extension (json or xml)
-     * @param string $template_title Title for the template
-     * @param string $import_type Import as page or template
-     * @return int|WP_Error Post ID on success, WP_Error on failure
-     */
-    private function direct_import_with_url_preservation($template_content, $file_extension, $template_title, $import_type) {
-        error_log('Starting direct import with URL preservation');
         
-        // Disable URL filters that might change image URLs
-        remove_all_filters('content_save_pre');
-        add_filter('wp_update_attachment_metadata', function($data) {
-            return $data; // Pass through without modifications
-        }, 99999);
+        $attachment_id = media_handle_sideload($file_array, 0, 'Elementor Template Placeholder');
         
-        // Disable URL replacement
-        add_filter('elementor/files/allow_unfiltered_upload', '__return_true');
+        // Delete temp file
+        @unlink($temp_file);
         
-        try {
-            // For JSON files
-            if ($file_extension === 'json') {
-                // Parse the JSON
-                $data = json_decode($template_content, true);
-                if (empty($data) || json_last_error() !== JSON_ERROR_NONE) {
-                    throw new Exception('Invalid JSON: ' . json_last_error_msg());
-                }
-                
-                // Determine the format
-                if (isset($data[0]['elType'])) {
-                    $elementor_data = wp_json_encode($data);
-                    $post_title = !empty($template_title) ? $template_title : 'Imported Template';
-                    $page_settings = array();
-                } else if (isset($data['content'])) {
-                    if (is_string($data['content'])) {
-                        $elementor_data = $data['content'];
-                    } else {
-                        $elementor_data = wp_json_encode($data['content']);
-                    }
-                    
-                    $post_title = !empty($template_title) ? $template_title : 
-                        (isset($data['title']) ? $data['title'] : 'Imported Template');
-                        
-                    $page_settings = isset($data['page_settings']) ? $data['page_settings'] : array();
-                } else {
-                    throw new Exception('Unrecognized JSON template format');
-                }
-                
-                // Create the post
-                $post_id = wp_insert_post([
-                    'post_title' => sanitize_text_field($post_title),
-                    'post_status' => 'publish',
-                    'post_type' => $import_type === 'page' ? 'page' : 'elementor_library',
-                    'post_content' => '',
-                ]);
-                
-                if (is_wp_error($post_id)) {
-                    throw new Exception('Failed to create post: ' . $post_id->get_error_message());
-                }
-                
-                // Set template metadata
-                update_post_meta($post_id, '_elementor_edit_mode', 'builder');
-                
-                if ($import_type === 'template') {
-                    $template_type = isset($data['type']) ? $data['type'] : 'page';
-                    update_post_meta($post_id, '_elementor_template_type', $template_type);
-                }
-                
-                // Set page template
-                $page_template = isset($page_settings['template']) ? $page_settings['template'] : 'elementor_header_footer';
-                update_post_meta($post_id, '_wp_page_template', $page_template);
-                
-                // Store page settings if available
-                if (!empty($page_settings)) {
-                    update_post_meta($post_id, '_elementor_page_settings', $page_settings);
-                }
-                
-                // Store Elementor data without any URL processing
-                update_post_meta($post_id, '_elementor_data', $elementor_data);
-                
-                return $post_id;
-            }
-            // For XML files
-            else if ($file_extension === 'xml') {
-                // We'll use our enhanced XML parser
-                $post_id = $this->import_xml_with_simple_parser($template_content, $template_title, $import_type);
-                
-                // If successful, forcibly restore any URLs that might have been replaced
-                if (!is_wp_error($post_id)) {
-                    $elementor_data = get_post_meta($post_id, '_elementor_data', true);
-                    
-                    if (!empty($elementor_data)) {
-                        // Re-save the Elementor data directly without processing
-                        update_post_meta($post_id, '_elementor_data', $elementor_data);
-                    }
-                }
-                
-                return $post_id;
-            }
-            else {
-                throw new Exception('Unsupported file type: ' . $file_extension);
-            }
-        }
-        catch (Exception $e) {
-            error_log('Direct import error: ' . $e->getMessage());
-            return new \WP_Error('import_failed', $e->getMessage());
-        }
-        finally {
-            // Restore filters
-            remove_filter('elementor/files/allow_unfiltered_upload', '__return_true');
-            // You can restore other filters here if needed
-        }
-    }
-
-    /**
-     * Extract Elementor data directly from XML using regex
-     * 
-     * @param string $xml_content Raw XML content
-     * @return string|bool Elementor data JSON or false if not found
-     */
-    private function extract_elementor_data_from_xml($xml_content) {
-        // Look for specific patterns that enclose Elementor data
-        $patterns = [
-            // Pattern for wp:meta_value containing Elementor data
-            '/<wp:meta_value><!\[CDATA\[(.*?)\]\]><\/wp:meta_value>/s',
-            // Pattern for meta_value without CDATA
-            '/<meta_value>(.*?)<\/meta_value>/s',
-            // Pattern for direct content field
-            '/<content><!\[CDATA\[(.*?)\]\]><\/content>/s',
-        ];
-        
-        foreach ($patterns as $pattern) {
-            if (preg_match_all($pattern, $xml_content, $matches)) {
-                foreach ($matches[1] as $match) {
-                    // Check if the content looks like JSON (Elementor data)
-                    if ($this->is_valid_json($match) && $this->looks_like_elementor_data($match)) {
-                        return $match;
-                    }
-                }
-            }
-        }
-        
-        // More aggressive search for any JSON structure in the XML
-        if (preg_match_all('/(\[\s*\{\s*"id":[^\]]*\]\s*)/s', $xml_content, $matches)) {
-            foreach ($matches[1] as $match) {
-                if ($this->is_valid_json($match) && $this->looks_like_elementor_data($match)) {
-                    return $match;
-                }
-            }
-        }
-        
-        return false;
-    }
-
-    /**
-     * Extract regular content from XML
-     * 
-     * @param string $xml_content Raw XML content
-     * @return string HTML content or empty string if not found
-     */
-    private function extract_content_from_xml($xml_content) {
-        // Look for content in encoded_content or content fields
-        $patterns = [
-            '/<encoded>(.*?)<\/encoded>/s',
-            '/<content:encoded><!\[CDATA\[(.*?)\]\]><\/content:encoded>/s',
-            '/<content><!\[CDATA\[(.*?)\]\]><\/content>/s',
-            '/<content>(.*?)<\/content>/s',
-        ];
-        
-        foreach ($patterns as $pattern) {
-            if (preg_match($pattern, $xml_content, $matches)) {
-                return $matches[1];
-            }
-        }
-        
-        return '';
-    }
-
-    /**
-     * Check if a string is valid JSON
-     * 
-     * @param string $string String to check
-     * @return bool True if valid JSON
-     */
-    private function is_valid_json($string) {
-        json_decode($string);
-        return (json_last_error() === JSON_ERROR_NONE);
-    }
-
-    /**
-     * Check if JSON string looks like Elementor data
-     * 
-     * @param string $json_string JSON string
-     * @return bool True if it looks like Elementor data
-     */
-    private function looks_like_elementor_data($json_string) {
-        // Elementor data typically starts with an array of elements with ids
-        $data = json_decode($json_string, true);
-        
-        if (!is_array($data)) {
-            return false;
-        }
-        
-        // Check for common Elementor data structure
-        foreach ($data as $element) {
-            if (is_array($element) && 
-                (isset($element['id']) || isset($element['elType'])) && 
-                (isset($element['elements']) || isset($element['settings']))) {
-                return true;
-            }
-        }
-        
-        return false;
-    }
-
-    /**
-     * Import XML with WordPress Importer while preserving URLs
-     * 
-     * @param string $content Template content
-     * @param string $title   Template title
-     * @param string $import_type Whether to import as 'page' or 'template'
-     * @return int|WP_Error   Template ID on success, WP_Error on failure
-     */
-    private function import_xml_with_wp_importer($content, $title, $import_type) {
-        // Before importing, add filters to preserve URLs
-        add_filter('wp_import_post_data_raw', array($this, 'preserve_elementor_data_urls'), 10, 1);
-        
-        // Prevent WordPress from replacing URLs
-        add_filter('import_post_meta_value', array($this, 'preserve_meta_value_urls'), 10, 2);
-        
-        // Create a temporary file to save XML content
-        $upload_dir = wp_upload_dir();
-        $temp_dir = $upload_dir['basedir'] . '/elementor-importer-' . uniqid();
-        
-        if (!file_exists($temp_dir)) {
-            wp_mkdir_p($temp_dir);
-        }
-        
-        $temp_file = $temp_dir . '/template.xml';
-        file_put_contents($temp_file, $content);
-        
-        // Store import type and title in options
-        update_option('_csmf_import_type', $import_type);
-        update_option('_csmf_import_title', $title);
-        
-        // Track imported templates
-        add_action('wp_import_post_meta', function($post_id, $key, $value) {
-            if ($key === '_elementor_data' || $key === '_elementor_template_type') {
-                update_option('_csmf_last_imported_template', $post_id);
-            }
-        }, 10, 3);
-        
-        // Setup and run the importer
-        $importer = new \WP_Import();
-        $importer->fetch_attachments = true;
-        
-        ob_start();
-        $importer->import($temp_file);
-        ob_end_clean();
-        
-        // Clean up
-        unlink($temp_file);
-        rmdir($temp_dir);
-        
-        // Remove filters
-        remove_filter('wp_import_post_data_raw', array($this, 'preserve_elementor_data_urls'));
-        remove_filter('import_post_meta_value', array($this, 'preserve_meta_value_urls'));
-        
-        // Get the imported template ID
-        $imported_template_id = get_option('_csmf_last_imported_template');
-        delete_option('_csmf_last_imported_template');
-        delete_option('_csmf_import_type');
-        delete_option('_csmf_import_title');
-        
-        if (!$imported_template_id) {
-            return new \WP_Error(
-                'import_failed', 
-                __('Failed to import template. No template was created.', 'elementor-template-importer')
-            );
-        }
-        
-        // Set the page template if it was reset
-        $original_page_template = get_post_meta($imported_template_id, '_wp_page_template', true);
-        if ($original_page_template === 'default' || empty($original_page_template)) {
-            update_post_meta($imported_template_id, '_wp_page_template', 'elementor_header_footer');
-        }
-        
-        // Fix Elementor data formats
-        $this->fix_elementor_data($imported_template_id);
-        
-        // Convert to page if needed
-        if ($import_type === 'page' && get_post_type($imported_template_id) !== 'page') {
-            $post_data = [
-                'ID' => $imported_template_id,
-                'post_type' => 'page'
-            ];
-            wp_update_post($post_data);
-        }
-        
-        // If we had a custom title, make sure it's applied
-        if (!empty($title)) {
-            wp_update_post([
-                'ID' => $imported_template_id,
-                'post_title' => sanitize_text_field($title)
-            ]);
-        }
-        
-        return $imported_template_id;
-    }
-
-    /**
-     * Preserve URLs in Elementor data during import
-     *
-     * @param array $post_data Post data being imported
-     * @return array Modified post data
-     */
-    public function preserve_elementor_data_urls($post_data) {
-        // If this has a custom title, apply it
-        $stored_title = get_option('_csmf_import_title', '');
-        if (!empty($stored_title) && ($post_data['post_type'] === 'elementor_library' || $post_data['post_type'] === 'page')) {
-            $post_data['post_title'] = $stored_title;
-        }
-        
-        // Don't modify the content - preserve URLs
-        return $post_data;
-    }
-
-    /**
-     * Preserve meta value URLs and ensure proper data types
-     *
-     * @param mixed $meta_value Meta value
-     * @param string $meta_key Meta key
-     * @return mixed Processed meta value
-     */
-    public function preserve_meta_value_urls($meta_value, $meta_key) {
-        // Handle special meta keys
-        if ($meta_key === '_elementor_data') {
-            // Ensure it's a valid JSON string
-            if (is_string($meta_value)) {
-                // Check if it's already a valid JSON string
-                json_decode($meta_value);
-                if (json_last_error() === JSON_ERROR_NONE) {
-                    // It's already valid JSON, return as is
-                    return $meta_value;
-                }
-                
-                // Try to decode and re-encode to ensure valid JSON format
-                $decoded = json_decode($meta_value, true);
-                if (is_array($decoded)) {
-                    return wp_json_encode($decoded);
-                }
-            }
-        } else if ($meta_key === '_elementor_page_settings') {
-            // Ensure page settings are stored as an array, not a JSON string
-            if (is_string($meta_value)) {
-                $decoded = json_decode($meta_value, true);
-                if (is_array($decoded)) {
-                    return $decoded;
-                }
-                
-                // If we couldn't decode it or it's not an array, return an empty array
-                return array();
-            }
-        } else if ($meta_key === '_wp_page_template' && ($meta_value === 'default' || empty($meta_value))) {
-            // Set default Elementor template
-            return 'elementor_header_footer';
-        }
-        
-        return $meta_value;
-    }
-
-    /**
-     * Fix Elementor data format after import
-     * 
-     * @param int $post_id Imported post ID
-     */
-    private function fix_elementor_data($post_id) {
-        // Fix _elementor_page_settings if it's a string
-        $page_settings = get_post_meta($post_id, '_elementor_page_settings', true);
-        if (is_string($page_settings)) {
-            // Try to decode
-            $decoded = json_decode($page_settings, true);
-            if (is_array($decoded)) {
-                // Update with the decoded array
-                update_post_meta($post_id, '_elementor_page_settings', $decoded);
-            } else {
-                // Delete the meta if we can't decode it
-                delete_post_meta($post_id, '_elementor_page_settings');
-            }
-        }
-        
-        // Fix _elementor_data if it's not a valid JSON string
-        $elementor_data = get_post_meta($post_id, '_elementor_data', true);
-        if (!is_string($elementor_data) || empty($elementor_data)) {
-            return;
-        }
-        
-        // Check if already valid JSON
-        json_decode($elementor_data);
-        if (json_last_error() === JSON_ERROR_NONE) {
-            return; // Already valid
-        }
-        
-        // Try to decode and re-encode
-        $decoded = json_decode($elementor_data, true);
-        if (is_array($decoded)) {
-            update_post_meta($post_id, '_elementor_data', wp_json_encode($decoded));
-        }
-    }
-
-    /**
-     * Debug helper to analyze XML file structure
-     * 
-     * @param string $template_url URL to the template XML
-     * @return string Debug information
-     */
-    public function debug_xml_structure($template_url) {
-        if (!current_user_can('manage_options')) {
-            return 'Insufficient permissions';
-        }
-        
-        $response = wp_remote_get($template_url, array(
-            'timeout' => 60,
-            'sslverify' => false,
-            'user-agent' => 'WordPress/' . get_bloginfo('version')
-        ));
-        
-        if (is_wp_error($response)) {
-            return 'Error: ' . $response->get_error_message();
-        }
-        
-        $content = wp_remote_retrieve_body($response);
-        
-        // Try to parse XML
-        libxml_use_internal_errors(true);
-        $xml = simplexml_load_string($content);
-        
-        if ($xml === false) {
-            $errors = '';
-            foreach(libxml_get_errors() as $error) {
-                $errors .= $error->message . "\n";
-            }
-            libxml_clear_errors();
-            return 'Invalid XML: ' . $errors;
-        }
-        
-        $output = "XML Structure Analysis:\n\n";
-        
-        // Root element
-        $output .= "Root element: " . $xml->getName() . "\n\n";
-        
-        // Channel information (WordPress export)
-        if (isset($xml->channel)) {
-            $output .= "WordPress Export Structure:\n";
-            $output .= "- Title: " . (isset($xml->channel->title) ? (string)$xml->channel->title : 'Not found') . "\n";
-            $output .= "- Items count: " . (isset($xml->channel->item) ? count($xml->channel->item) : 0) . "\n\n";
-            
-            if (isset($xml->channel->item) && count($xml->channel->item) > 0) {
-                $output .= "First item details:\n";
-                $item = $xml->channel->item[0];
-                
-                $output .= "- Title: " . (isset($item->title) ? (string)$item->title : 'Not found') . "\n";
-                
-                if (isset($item->children('wp', true)->post_type)) {
-                    $output .= "- Post type: " . (string)$item->children('wp', true)->post_type . "\n";
-                } else if (isset($item->post_type)) {
-                    $output .= "- Post type: " . (string)$item->post_type . "\n";
-                } else {
-                    $output .= "- Post type: Not found\n";
-                }
-                
-                // Check for Elementor data
-                $output .= "\nChecking for Elementor data:\n";
-                
-                if (isset($item->children('wp', true)->postmeta)) {
-                    $output .= "- Has wp:postmeta: Yes\n";
-                    
-                    foreach ($item->children('wp', true)->postmeta as $meta) {
-                        $meta_key = (string)$meta->children('wp', true)->meta_key;
-                        $output .= "  - Meta key: " . $meta_key . "\n";
-                        
-                        if ($meta_key === '_elementor_data') {
-                            $output .= "    => Elementor data found in wp:postmeta!\n";
-                            $data_sample = substr((string)$meta->children('wp', true)->meta_value, 0, 100);
-                            $output .= "    Sample: " . $data_sample . "...\n";
-                        }
-                    }
-                } else {
-                    $output .= "- Has wp:postmeta: No\n";
-                }
-                
-                if (isset($item->postmeta)) {
-                    $output .= "- Has direct postmeta: Yes\n";
-                    
-                    foreach ($item->postmeta as $meta) {
-                        $meta_key = (string)$meta->meta_key;
-                        $output .= "  - Meta key: " . $meta_key . "\n";
-                        
-                        if ($meta_key === '_elementor_data') {
-                            $output .= "    => Elementor data found in direct postmeta!\n";
-                            $data_sample = substr((string)$meta->meta_value, 0, 100);
-                            $output .= "    Sample: " . $data_sample . "...\n";
-                        }
-                    }
-                } else {
-                    $output .= "- Has direct postmeta: No\n";
-                }
-            }
-        } else {
-            $output .= "Not a standard WordPress export.\n\n";
-            
-            // Direct Elementor export
-            if (isset($xml->content)) {
-                $output .= "Possible direct Elementor export found:\n";
-                $output .= "- Has content element: Yes\n";
-                $content_sample = substr((string)$xml->content, 0, 100);
-                $output .= "- Content sample: " . $content_sample . "...\n";
-            } else {
-                $output .= "- No content element found\n";
-            }
-            
-            // List all top-level elements
-            $output .= "\nTop-level elements:\n";
-            foreach ($xml->children() as $child) {
-                $output .= "- " . $child->getName() . "\n";
-            }
-        }
-        
-        return $output;
+        return $attachment_id;
     }
 }
